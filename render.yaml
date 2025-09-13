@@ -15,9 +15,7 @@ services:
         value: production
       - key: SESSION_SECRET
         generateValue: true
-      - key: DATA_DIR
-        value: /data
-    disk:
-      name: data
-      mountPath: /data
-      sizeGB: 1
+      # On Render free tier, persistent disks are not supported.
+      # If later upgrading to a paid plan with disk, you can re-add DATA_DIR=/data
+      # and a disk section. For free plan, omit disk and use ephemeral storage
+      # or switch to an external DB.
