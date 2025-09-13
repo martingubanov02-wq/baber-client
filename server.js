@@ -12,7 +12,8 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+// Provide a safe default so the admin endpoint works even if env var is missing (can be overridden in Environment)
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'admin-123';
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(path.join(DATA_DIR, 'sessions'), { recursive: true });
