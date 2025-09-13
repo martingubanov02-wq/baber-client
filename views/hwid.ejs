@@ -1,0 +1,32 @@
+<%- include('partials/layout', { title: 'HWID привязка' }) %>
+<section class="card small">
+  <h2>Привязка HWID</h2>
+
+  <% if (u && u.hwid) { %>
+    <p><b>Ваш текущий HWID:</b> <code><%= u.hwid %></code></p>
+    <p><b>Статус:</b> <%= u.hwid_status || 'не задан' %></p>
+  <% } else { %>
+    <p>У вас ещё нет привязанного HWID.</p>
+  <% } %>
+
+  <form method="post" action="/hwid" style="margin-top:10px">
+    <label>Ваш HWID</label>
+    <input type="text" name="hwid" required minlength="6" maxlength="128" placeholder="Вставьте ваш HWID" />
+    <% if (!u || !u.hwid_activation_used) { %>
+      <label>Ключ активации (одноразово)</label>
+      <input type="password" name="key" required minlength="6" maxlength="128" placeholder="Ключ, который вы использовали при регистрации" />
+      <p class="muted">Ключ требуется только при первой привязке HWID. Потом менять HWID можно только через админа (30 ₽).</p>
+    <% } %>
+    <button class="btn" type="submit">Отправить на проверку</button>
+  </form>
+
+  <div class="hint" style="margin-top:12px">
+    <p>Стоимость подтверждения/сброса HWID — <b><%= price %> ₽</b>. Оплатите на FunPay и напишите администратору:</p>
+    <ul>
+      <li><a href="<%= funpay1 %>" target="_blank" rel="noopener">FunPay профиль 1</a></li>
+      <li><a href="<%= funpay2 %>" target="_blank" rel="noopener">FunPay профиль 2</a></li>
+    </ul>
+    <p>После оплаты администратор подтвердит HWID, и станет доступна загрузка клиента.</p>
+  </div>
+</section>
+<%- include('partials/footer') %>

@@ -81,6 +81,24 @@ app.get('/admin/invites', async (req, res) => {
   return res.json({ created });
 });
 
+// API: HWID check for game client
+app.get('/api/hwid/check', async (req, res) => {
+  try {
+    const username = (req.query.u||'').toString().trim();
+    const hwid = (req.query.hwid||'').toString().trim();
+    if (!username || !hwid) return res.status(400).json({ status: 'bad_request' });
+    const u = await usersDb.findOne({ username });
+    if (!u) return res.json({ status: 'no_user' });
+    if (!u.hwid) return res.json({ status: 'no_hwid' });
+    if (u.hwid !== hwid) return res.json({ status: 'mismatch' });
+    if (u.hwid_status === 'approved') return res.json({ status: 'approved' });
+    return res.json({ status: u.hwid_status || 'pending' });
+  } catch (e) {
+    console.error('hwid/check error', e);
+    return res.status(500).json({ status: 'error' });
+  }
+});
+
 // Pages
 app.get('/', (req, res) => res.render('index', { title: 'BABER client' }));
 app.get('/register', (req, res) => res.render('register', { title: 'Регистрация' }));
@@ -109,8 +127,88 @@ app.post('/logout', (req, res)=>{ req.session.destroy(()=>res.redirect('/')); })
 
 function requireAuth(req, res, next){ if(!req.session.user){ req.session.flash={type:'error',message:'Войдите'}; return res.redirect('/login'); } next(); }
 
-app.get('/download', requireAuth, (req,res)=> res.render('download', { title:'Скачать мод' }));
-app.get('/mod', requireAuth, (req,res)=>{
+// Require HWID approved to access protected resources (download/mod)
+async function requireHwidApproved(req, res, next){
+  try {
+    const username = req.session.user?.username;
+    if (!username) { req.session.flash={type:'error',message:'Войдите'}; return res.redirect('/login'); }
+    const u = await usersDb.findOne({ username });
+    if (!u || !u.hwid || u.hwid_status !== 'approved') {
+      req.session.flash = { type: 'error', message: 'Привяжите HWID и дождитесь подтверждения. Сброс HWID — 30 RUB (FunPay)'};
+      return res.redirect('/hwid');
+    }
+    return next();
+  } catch(err){
+    console.error('requireHwidApproved error', err);
+    req.session.flash = { type: 'error', message: 'Ошибка проверки HWID' };
+    return res.redirect('/hwid');
+  }
+}
+
+// HWID management pages
+app.get('/hwid', requireAuth, async (req,res)=>{
+  const username = req.session.user.username;
+  const u = await usersDb.findOne({ username });
+  return res.render('hwid', { title: 'HWID привязка', u, funpay1: 'https://funpay.com/users/13579417/', funpay2: 'https://funpay.com/users/10104456/', price: 30 });
+});
+
+app.post('/hwid', requireAuth, async (req,res)=>{
+  const username = req.session.user.username;
+  const hwid = (req.body.hwid||'').trim();
+  const key = (req.body.key||'').trim();
+  if (!hwid || hwid.length < 6 || hwid.length > 128){
+    req.session.flash = { type:'error', message:'Укажи корректный HWID' };
+    return res.redirect('/hwid');
+  }
+  const u = await usersDb.findOne({ username });
+  if (!u) { req.session.flash={type:'error',message:'Пользователь не найден'}; return res.redirect('/hwid'); }
+  // One-time activation with account key
+  if (!u.hwid_activation_used) {
+    if (!key) { req.session.flash={type:'error',message:'Укажи ключ активации (полученный при регистрации)'}; return res.redirect('/hwid'); }
+    if (u.key_hash !== key) { req.session.flash={type:'error',message:'Неверный ключ активации'}; return res.redirect('/hwid'); }
+  }
+  // If activation already used and user wants to change HWID, require admin reset flow
+  if (u.hwid_activation_used) {
+    req.session.flash = { type:'error', message:'Активация HWID уже использована. Для смены HWID обратитесь к администратору (30 RUB).' };
+    return res.redirect('/hwid');
+  }
+  await usersDb.update({ username }, { $set: { hwid, hwid_status: 'pending', hwid_updated_at: new Date().toISOString(), hwid_activation_used: true } }, { upsert: true });
+  req.session.flash = { type:'success', message:'HWID отправлен на проверку (одноразовая активация). После оплаты 30 RUB на FunPay админ подтвердит.' };
+  return res.redirect('/hwid');
+});
+
+// Admin endpoints for HWID operations (manual FunPay confirmation)
+app.get('/admin/hwid/approve', async (req,res)=>{
+  const token = (req.query.token||'').toString();
+  if (token !== ADMIN_TOKEN) return res.status(403).json({ error:'forbidden' });
+  const username = (req.query.user||'').toString();
+  if (!username) return res.status(400).json({ error:'user required' });
+  await usersDb.update({ username }, { $set: { hwid_status: 'approved', hwid_approved_at: new Date().toISOString() }, $unset: { hwid_reset_requested: true } });
+  return res.json({ ok:true });
+});
+
+app.get('/admin/hwid/reset', async (req,res)=>{
+  const token = (req.query.token||'').toString();
+  if (token !== ADMIN_TOKEN) return res.status(403).json({ error:'forbidden' });
+  const username = (req.query.user||'').toString();
+  if (!username) return res.status(400).json({ error:'user required' });
+  await usersDb.update({ username }, { $unset: { hwid: true, hwid_status: true, hwid_approved_at: true }, $set: { hwid_reset_done_at: new Date().toISOString() } });
+  return res.json({ ok:true });
+});
+
+app.get('/admin/hwid/set', async (req,res)=>{
+  const token = (req.query.token||'').toString();
+  if (token !== ADMIN_TOKEN) return res.status(403).json({ error:'forbidden' });
+  const username = (req.query.user||'').toString();
+  const hwid = (req.query.hwid||'').toString();
+  if (!username || !hwid) return res.status(400).json({ error:'user & hwid required' });
+  await usersDb.update({ username }, { $set: { hwid, hwid_status: 'approved', hwid_approved_at: new Date().toISOString() } }, { upsert: true });
+  return res.json({ ok:true });
+});
+
+// Protected content requires HWID approved
+app.get('/download', requireAuth, requireHwidApproved, (req,res)=> res.render('download', { title:'Скачать мод' }));
+app.get('/mod', requireAuth, requireHwidApproved, (req,res)=>{
   const p = path.join(__dirname, 'downloads', 'client-mod.jar');
   if (!fs.existsSync(p)) { req.session.flash={type:'error',message:'Файл не найден'}; return res.redirect('/download'); }
   return res.download(p, 'BABERClientMod.jar');

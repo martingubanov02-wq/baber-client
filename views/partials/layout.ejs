@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title><%= typeof title !== 'undefined' ? title : 'BABER client' %></title>
   <link rel="stylesheet" href="/static/style.css" />
+  <!-- deploy: v-hwid-1 -->
 </head>
 <body>
   <header class="wrap">
@@ -13,6 +14,7 @@
       <nav>
         <% if (user) { %>
           <span class="welcome">👋 <%= user.username %></span>
+          <a class="btn small" href="/hwid">HWID</a>
           <form method="post" action="/logout" style="display:inline">
             <button class="btn small" type="submit">Выйти</button>
           </form>
