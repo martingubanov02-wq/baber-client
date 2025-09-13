@@ -12,6 +12,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(path.join(DATA_DIR, 'sessions'), { recursive: true });
@@ -49,6 +50,35 @@ app.use((req, res, next) => {
 
 // Health
 app.get('/health', (req, res) => res.send('OK'));
+
+// Admin: generate invite keys
+function randomKey(len = 20) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let out = '';
+  for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out.match(/.{1,4}/g).join('-');
+}
+
+app.get('/admin/invites', async (req, res) => {
+  if (!ADMIN_TOKEN) return res.status(503).json({ error: 'ADMIN_TOKEN not set' });
+  const token = (req.query.token||'').toString();
+  if (token !== ADMIN_TOKEN) return res.status(403).json({ error: 'forbidden' });
+  const count = Math.max(1, Math.min(100, Number(req.query.count||1)));
+  const created = [];
+  for (let i = 0; i < count; i++) {
+    let key;
+    // ensure uniqueness
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      key = 'INV-' + randomKey(20);
+      const exists = await invitesDb.findOne({ key });
+      if (!exists) break;
+    }
+    await invitesDb.insert({ key, used: false });
+    created.push(key);
+  }
+  return res.json({ created });
+});
 
 // Pages
 app.get('/', (req, res) => res.render('index', { title: 'BABER client' }));
