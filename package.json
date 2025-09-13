@@ -1,0 +1,17 @@
+{
+  "name": "baber-client-site3",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "invites": "node scripts/generate_invites.js 10"
+  },
+  "dependencies": {
+    "compression": "^1.8.1",
+    "ejs": "3.1.10",
+    "express": "4.19.2",
+    "express-session": "1.17.3",
+    "nedb-promises": "3.0.7"
+  }
+}

@@ -1,0 +1,11 @@
+node_modules/
+.env
+logs/
+*.log
+# local database and sessions (handled in cloud by /data volume)
+data/
+# local downloads artifact (binary)
+downloads/
+# OS/editor noise
+.DS_Store
+Thumbs.db

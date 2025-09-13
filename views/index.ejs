@@ -1,0 +1,13 @@
+<%- include('partials/layout', { title: 'BABER client' }) %>
+<section class="card">
+  <h1>Загрузка мод-клиента</h1>
+  <p>Зарегистрируйтесь по выданному ключу, войдите и скачайте файл.</p>
+  <div class="actions">
+    <% if (!user) { %>
+      <a class="btn" href="/login">Войти</a>
+      <a class="btn outline" href="/register">Регистрация</a>
+    <% } else { %>
+      <a class="btn" href="/download">Перейти к скачиванию</a>
+    <% } %>
+  </div>
+</section>

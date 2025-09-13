@@ -1,0 +1,23 @@
+*{box-sizing:border-box}
+body{margin:0;background:#0f1115;color:#eaeef2;font:16px/1.5 system-ui,Segoe UI,Roboto,Arial}
+a{color:#58a6ff;text-decoration:none}
+.wrap{max-width:900px;margin:0 auto;padding:16px}
+.nav{display:flex;justify-content:space-between;align-items:center}
+.brand{font-weight:700}
+.btn{display:inline-block;padding:8px 14px;background:#238636;color:#fff;border-radius:6px;transition:transform .12s ease,box-shadow .12s ease,background .2s ease}
+.btn:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(0,0,0,.25)}
+.btn:active{transform:translateY(0);box-shadow:none}
+.btn.outline{background:transparent;border:1px solid #238636;color:#cfe9d6}
+.btn.small{padding:6px 10px;font-size:14px}
+.card{background:#151a22;border:1px solid #222836;border-radius:14px;padding:18px;box-shadow:0 10px 24px rgba(0,0,0,.25);animation:fadeUp .35s ease both}
+.card.small{max-width:430px;margin:40px auto}
+.actions .btn{margin-right:8px}
+.flash{padding:10px 12px;border-radius:10px;margin:10px 0;animation:slideDown .3s ease both}
+.flash.error{background:#2b1216;color:#ffb4b4;border:1px solid #4a151c}
+.flash.success{background:#122b18;color:#b9ffd1;border:1px solid #164a27}
+label{display:block;margin:8px 0 4px}
+input{width:100%;padding:10px;border-radius:10px;border:1px solid #2a303c;background:#0f141d;color:#eaeef2;transition:border .15s ease,box-shadow .15s ease}
+input:focus{outline:none;border-color:#2f81f7;box-shadow:0 0 0 3px rgba(47,129,247,.2)}
+
+@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes slideDown{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}

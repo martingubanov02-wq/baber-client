@@ -1,0 +1,11 @@
+<%- include('partials/layout', { title: 'Регистрация' }) %>
+<section class="card small">
+  <h2>Регистрация</h2>
+  <form method="post" action="/register">
+    <label>Ник</label>
+    <input type="text" name="username" required minlength="3" maxlength="32" />
+    <label>Ключ</label>
+    <input type="password" name="key" required minlength="6" maxlength="128" placeholder="Вставьте выданный ключ" />
+    <button class="btn" type="submit">Создать аккаунт</button>
+  </form>
+</section>
