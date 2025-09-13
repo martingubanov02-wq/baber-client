@@ -9,3 +9,8 @@ logs/
 # local data (handled by Render disk at /data)
 data/
 /data
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.git
+.gitignore
