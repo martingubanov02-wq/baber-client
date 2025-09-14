@@ -21,7 +21,8 @@ fs.mkdirSync(path.join(DATA_DIR, 'sessions'), { recursive: true });
 // DB
 const usersDb = Datastore.create({ filename: path.join(DATA_DIR, 'users.db'), autoload: true, timestampData: true });
 const invitesDb = Datastore.create({ filename: path.join(DATA_DIR, 'invites.db'), autoload: true, timestampData: true });
-await usersDb.ensureIndex({ fieldName: 'username', unique: true });
+await usersDb.ensureIndex({ fieldName: 'username', unique: false });
+await usersDb.ensureIndex({ fieldName: 'usernameLower', unique: true });
 await invitesDb.ensureIndex({ fieldName: 'key', unique: true });
 
 // Views & static
@@ -89,18 +90,42 @@ app.get('/admin/invites', async (req, res) => {
 // API: HWID check for game client
 app.get('/api/hwid/check', async (req, res) => {
   try {
-    const username = (req.query.u||'').toString().trim();
+    const usernameRaw = (req.query.u||'').toString().trim();
+    const usernameLower = usernameRaw.toLowerCase();
     const hwid = (req.query.hwid||'').toString().trim();
-    if (!username || !hwid) return res.status(400).json({ status: 'bad_request' });
-    const u = await usersDb.findOne({ username });
+    if (!usernameLower || !hwid) return res.status(400).json({ status: 'bad_request' });
+    const u = await usersDb.findOne({ $or: [ { usernameLower }, { username: usernameRaw } ] });
     if (!u) return res.json({ status: 'no_user' });
     if (!u.hwid) return res.json({ status: 'no_hwid' });
     if (u.hwid !== hwid) return res.json({ status: 'mismatch' });
-    if (u.hwid_status === 'approved') return res.json({ status: 'approved' });
+    if (u.hwid_status === 'approved') {
+      if (u.game_activation_used) return res.json({ status: 'approved' });
+      return res.json({ status: 'game_pending' });
+    }
     return res.json({ status: u.hwid_status || 'pending' });
   } catch (e) {
     console.error('hwid/check error', e);
     return res.status(500).json({ status: 'error' });
+  }
+});
+
+// API: one-time game activation from Minecraft client
+app.post('/api/hwid/activate', async (req, res) => {
+  try {
+    const usernameRaw = (req.body.u||'').toString().trim();
+    const usernameLower = usernameRaw.toLowerCase();
+    const hwid = (req.body.hwid||'').toString().trim();
+    if (!usernameLower || !hwid) return res.status(400).json({ ok:false, error:'bad_request' });
+    const u = await usersDb.findOne({ $or: [ { usernameLower }, { username: usernameRaw } ] });
+    if (!u) return res.status(404).json({ ok:false, error:'no_user' });
+    if (!u.hwid || u.hwid !== hwid) return res.status(400).json({ ok:false, error:'mismatch' });
+    if (u.hwid_status !== 'approved') return res.status(400).json({ ok:false, error:'not_approved' });
+    if (u.game_activation_used) return res.json({ ok:true, already:true });
+    await usersDb.update({ _id: u._id }, { $set: { game_activation_used: true, game_activated_at: new Date().toISOString() } });
+    return res.json({ ok:true });
+  } catch (e) {
+    console.error('hwid/activate error', e);
+    return res.status(500).json({ ok:false, error:'error' });
   }
 });
 
@@ -109,6 +134,7 @@ app.get('/', (req, res) => res.render('index', { title: 'BABER client' }));
 app.get('/register', (req, res) => res.render('register', { title: 'Регистрация' }));
 app.post('/register', async (req, res) => {
   const username = (req.body.username||'').trim();
+  const usernameLower = username.toLowerCase();
   const keyRaw = (req.body.key||'').trim();
   const key = normKey(keyRaw);
   if (!username || !key) { req.session.flash={type:'error',message:'Укажи ник и ключ'}; return res.redirect('/register'); }
@@ -120,7 +146,7 @@ app.post('/register', async (req, res) => {
       || await invitesDb.findOne({ key: keyRaw, used: { $ne: true } });
   }
   if (!inv) { req.session.flash={type:'error',message:'Неверный или уже использованный ключ'}; return res.redirect('/register'); }
-  await usersDb.update({ username }, { $set: { username, key_hash: key } }, { upsert: true });
+  await usersDb.update({ usernameLower }, { $set: { username, usernameLower, key_hash: key } }, { upsert: true });
   await invitesDb.update({ _id: inv._id }, { $set: { used: true, used_by: username, used_at: new Date().toISOString() } });
   req.session.user = { username };
   req.session.flash = { type:'success', message:'Добро пожаловать!' };
@@ -128,11 +154,12 @@ app.post('/register', async (req, res) => {
 });
 app.get('/login', (req, res) => res.render('login', { title: 'Вход' }));
 app.post('/login', async (req, res) => {
-  const username = (req.body.username||'').trim();
+  const usernameInput = (req.body.username||'').trim();
+  const usernameLower = usernameInput.toLowerCase();
   const keyInput = normKey((req.body.key||'').trim());
-  const u = await usersDb.findOne({ username });
+  const u = await usersDb.findOne({ $or: [ { usernameLower }, { username: usernameInput } ] });
   if (!u || normKey(u.key_hash||'') !== keyInput) { req.session.flash={type:'error',message:'Неверные данные'}; return res.redirect('/login'); }
-  req.session.user = { username };
+  req.session.user = { username: u.username };
   return res.redirect('/download');
 });
 app.post('/logout', (req, res)=>{ req.session.destroy(()=>res.redirect('/')); });
