@@ -172,6 +172,7 @@ app.post('/register', async (req, res) => {
   if (!inv) { req.session.flash={type:'error',message:'Неверный или уже использованный ключ'}; return res.redirect('/register'); }
   await usersDb.update({ usernameLower }, { $set: { username, usernameLower, key_hash: key } }, { upsert: true });
   await invitesDb.update({ _id: inv._id }, { $set: { used: true, used_by: username, used_at: new Date().toISOString() } });
+  await invitesDb.update({ _id: inv._id }, { $set: { used_byLower: usernameLower } });
   req.session.user = { username };
   req.session.flash = { type:'success', message:'Добро пожаловать!' };
   return res.redirect('/');
@@ -181,18 +182,52 @@ app.post('/login', async (req, res) => {
   const usernameInput = (req.body.username||'').trim();
   const usernameLower = usernameInput.toLowerCase();
   const keyInput = normKey((req.body.key||'').trim());
-  const u = await usersDb.findOne({ $or: [ { usernameLower }, { username: usernameInput } ] });
-  // Основная проверка по сохранённому ключу
-  let ok = !!u && normKey(u.key_hash||'') === keyInput;
-  // Фоллбек: если по какой-то причине key_hash не совпал, проверим ключ инвайта, которым регистрировались
-  if (!ok && u) {
-    const inv = await invitesDb.findOne({ used_by: u.username });
-    if (inv) {
-      const invKeyNorm = normKey(inv.key||inv.raw||'');
-      if (invKeyNorm && invKeyNorm === keyInput) ok = true;
+  let u = await usersDb.findOne({ $or: [ { usernameLower }, { username: usernameInput } ] });
+  let ok = false;
+  // 1) Основная проверка по user.key_hash
+  if (u && normKey(u.key_hash||'') === keyInput) {
+    ok = true;
+  }
+  // 2) Фоллбек по инвайту пользователя (case-insensitive)
+  if (!ok) {
+    const invByUser = await invitesDb.findOne({ $or: [ { used_by: (u?.username)||usernameInput }, { used_byLower: usernameLower } ] });
+    const invKeyNorm = invByUser ? normKey(invByUser.key||invByUser.raw||'') : '';
+    if (invByUser && invKeyNorm === keyInput) {
+      ok = true;
+      // если пользователя нет — создадим
+      if (!u) {
+        await usersDb.update({ usernameLower }, { $set: { username: usernameInput, usernameLower, key_hash: keyInput } }, { upsert: true });
+        u = await usersDb.findOne({ usernameLower });
+      } else if (normKey(u.key_hash||'') !== keyInput) {
+        // обновим ключ, если отличается
+        await usersDb.update({ _id: u._id }, { $set: { key_hash: keyInput } });
+      }
     }
   }
-  if (!ok) { req.session.flash={type:'error',message:'Неверные данные'}; return res.redirect('/login'); }
+  // 3) Фоллбек по инвайту с ключом (если в used_by записан ник в другом регистре)
+  if (!ok) {
+    const invByKey = await invitesDb.findOne({ key: keyInput });
+    if (invByKey && ((invByKey.used_byLower||'') === usernameLower || (invByKey.used_by||'') === usernameInput)) {
+      ok = true;
+      if (!u) {
+        await usersDb.update({ usernameLower }, { $set: { username: usernameInput, usernameLower, key_hash: keyInput } }, { upsert: true });
+        u = await usersDb.findOne({ usernameLower });
+      } else if (normKey(u.key_hash||'') !== keyInput) {
+        await usersDb.update({ _id: u._id }, { $set: { key_hash: keyInput } });
+      }
+    }
+  }
+  // 4) Если инвайт существует и ещё не использован — привяжем к этому пользователю прямо при входе
+  if (!ok) {
+    const invFree = await invitesDb.findOne({ key: keyInput, used: { $ne: true } });
+    if (invFree) {
+      await invitesDb.update({ _id: invFree._id }, { $set: { used: true, used_by: usernameInput, used_byLower: usernameLower, used_at: new Date().toISOString() } });
+      await usersDb.update({ usernameLower }, { $set: { username: usernameInput, usernameLower, key_hash: keyInput } }, { upsert: true });
+      u = await usersDb.findOne({ usernameLower });
+      ok = !!u;
+    }
+  }
+  if (!ok || !u) { req.session.flash={type:'error',message:'Неверные данные'}; return res.redirect('/login'); }
   req.session.user = { username: u.username };
   return res.redirect('/');
 });
