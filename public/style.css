@@ -18,6 +18,30 @@ a{color:#58a6ff;text-decoration:none}
 label{display:block;margin:8px 0 4px}
 input{width:100%;padding:10px;border-radius:10px;border:1px solid #2a303c;background:#0f141d;color:#eaeef2;transition:border .15s ease,box-shadow .15s ease}
 input:focus{outline:none;border-color:#2f81f7;box-shadow:0 0 0 3px rgba(47,129,247,.2)}
+.muted{color:#aab6c5}
+.small{font-size:13px}
+
+/* Hero */
+.hero{position:relative;overflow:hidden}
+.shine{background:linear-gradient(90deg,#fff,#9ad6ff,#fff);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shine 3.5s linear infinite}
+@keyframes shine{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+/* Features */
+.features{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:14px 0}
+.feature{background:#121720;border:1px solid #1f2532;border-radius:12px;padding:14px}
+.feature h3{margin:4px 0 6px}
+.fade-in{animation:fadeUp .4s ease both}
+
+/* Pricing */
+.pricing .tiers{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:10px}
+.tier{position:relative;background:#121720;border:1px solid #1f2532;border-radius:12px;padding:14px;text-align:center}
+.tier .price{font-size:28px;font-weight:800;margin:6px 0 10px}
+.tier .btn{width:100%}
+.tier.pop{border-color:#2f81f7;box-shadow:0 10px 24px rgba(47,129,247,.2)}
+.tier .badge{position:absolute;top:-10px;right:-10px;background:#2f81f7;color:#fff;padding:4px 8px;border-radius:999px;font-size:12px}
+
+/* Links list */
+.links{list-style:none;padding:0;margin:8px 0;display:flex;gap:10px;flex-wrap:wrap}
 
 @keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 @keyframes slideDown{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}

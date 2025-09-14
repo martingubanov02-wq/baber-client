@@ -1,14 +1,71 @@
 <%- include('partials/layout', { title: 'BABER client' }) %>
-<section class="card">
-  <h1>Загрузка мод-клиента</h1>
-  <p>Зарегистрируйтесь по выданному ключу, войдите и скачайте файл.</p>
+<section class="hero card">
+  <h1 class="shine">BABER — самый быстрый Autoby & AutoMyst + XRay</h1>
+  <p class="muted">Лёгкий клиент с максимальным FPS, умной автозакупкой и точным авто‑мистом. XRay нового поколения — видишь то, что нужно.</p>
   <div class="actions">
     <% if (!user) { %>
       <a class="btn" href="/login">Войти</a>
       <a class="btn outline" href="/register">Регистрация</a>
     <% } else { %>
-      <a class="btn" href="/download">Перейти к скачиванию</a>
+      <a class="btn" href="/download">Скачать клиент</a>
+      <a class="btn outline" href="/hwid">Привязать HWID</a>
     <% } %>
   </div>
+</section>
+
+<section class="features">
+  <div class="feature fade-in">
+    <h3>Autobuy</h3>
+    <p>Мгновенная автопокупка по лучшим ценам. Никаких лишних кликов — всё за тебя.</p>
+  </div>
+  <div class="feature fade-in" style="animation-delay:.08s">
+    <h3>AutoMyst</h3>
+    <p>Умный алгоритм: ловит самые выгодные мисты и экономит время.</p>
+  </div>
+  <div class="feature fade-in" style="animation-delay:.16s">
+    <h3>XRay</h3>
+    <p>Точный рендер нужных ресурсов. Видишь полезное — игнорируешь шум.</p>
+  </div>
+</section>
+
+<section class="pricing card">
+  <h2>Тарифы BABER</h2>
+  <div class="tiers">
+    <div class="tier">
+      <h3>Неделя</h3>
+      <div class="price">49 ₽</div>
+      <a class="btn" href="#buy-week" target="_blank" rel="noopener">Купить</a>
+    </div>
+    <div class="tier pop">
+      <div class="badge">Топ</div>
+      <h3>Месяц</h3>
+      <div class="price">149 ₽</div>
+      <a class="btn" href="#buy-month" target="_blank" rel="noopener">Купить</a>
+    </div>
+    <div class="tier">
+      <h3>Навсегда</h3>
+      <div class="price">399 ₽</div>
+      <a class="btn" href="#buy-forever" target="_blank" rel="noopener">Купить</a>
+    </div>
+  </div>
+  <p class="muted small">Оплата у проверенных продавцов: <a href="#famster" target="_blank" rel="noopener">Famster</a>, <a href="#money" target="_blank" rel="noopener">Money</a>, <a href="#nikitanaga" target="_blank" rel="noopener">Nikitanaga</a>. Заменим на реальные ссылки — просто скажи.</p>
+</section>
+
+<section class="card small">
+  <h3>Сброс HWID — 10 ₽</h3>
+  <p class="muted">Сменили ПК? Оформите оплату и напишите админу — быстро подтвердим новый HWID.</p>
+  <ul class="links">
+    <li><a href="#famster-reset" target="_blank" rel="noopener">Famster</a></li>
+    <li><a href="#money-reset" target="_blank" rel="noopener">Money</a></li>
+    <li><a href="#nikitanaga-reset" target="_blank" rel="noopener">Nikitanaga</a></li>
+  </ul>
+  <% if (user) { %>
+    <a class="btn" href="/hwid">Открыть страницу HWID</a>
+  <% } else { %>
+    <div class="actions">
+      <a class="btn" href="/login">Войти</a>
+      <a class="btn outline" href="/register">Регистрация</a>
+    </div>
+  <% } %>
 </section>
 <%- include('partials/footer') %>

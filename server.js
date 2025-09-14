@@ -138,6 +138,18 @@ app.post('/register', async (req, res) => {
   const keyRaw = (req.body.key||'').trim();
   const key = normKey(keyRaw);
   if (!username || !key) { req.session.flash={type:'error',message:'Укажи ник и ключ'}; return res.redirect('/register'); }
+  // Ник уже существует? Разрешим вход, а не новую регистрацию
+  const existing = await usersDb.findOne({ usernameLower });
+  if (existing) {
+    if (normKey(existing.key_hash||'') !== key) {
+      req.session.flash = { type:'error', message:'Ник уже занят. Введите правильный ключ на странице Вход.' };
+      return res.redirect('/login');
+    }
+    // Ключ совпал — считаем, что пользователь просто пытается войти через форму регистрации
+    req.session.user = { username: existing.username };
+    req.session.flash = { type:'success', message:'Добро пожаловать!' };
+    return res.redirect('/download');
+  }
   // Accept invite keys with or without dashes/spaces (normalize on lookup too)
   let inv = await invitesDb.findOne({ key: key, used: { $ne: true } });
   if (!inv) {
