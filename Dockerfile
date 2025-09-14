@@ -6,9 +6,8 @@ WORKDIR /app
 
 # Install deps
 COPY package*.json ./
-# Prefer ci when lockfile exists, fallback to install
-RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --production; fi \
-    && npm cache clean --force
+# Prefer ci when lockfile exists, fallback to install (without npm cache clean)
+RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
 
 # Copy sources
 COPY . .
