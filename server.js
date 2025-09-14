@@ -248,8 +248,12 @@ app.get('/admin/hwid/set', async (req,res)=>{
 // Protected content requires HWID approved
 app.get('/download', requireAuth, requireHwidApproved, (req,res)=> res.render('download', { title:'Скачать мод' }));
 app.get('/mod', requireAuth, requireHwidApproved, (req,res)=>{
-  const p = path.join(__dirname, 'downloads', 'client-mod.jar');
-  if (!fs.existsSync(p)) { req.session.flash={type:'error',message:'Файл не найден'}; return res.redirect('/download'); }
+  // Serve from public/ so the file is in the repo and deployed reliably
+  const p = path.join(__dirname, 'public', 'client-mod.jar');
+  if (!fs.existsSync(p)) {
+    req.session.flash={type:'error',message:'Файл не найден. Положите client-mod.jar в web3/public/ и задеплойте.'};
+    return res.redirect('/download');
+  }
   return res.download(p, 'BABERClientMod.jar');
 });
 
