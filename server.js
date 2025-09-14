@@ -109,26 +109,40 @@ app.post('/tg/:secret', express.json({ limit: '256kb' }), async (req, res) => {
     if (!u || !chatId || !text) return res.json({ ok:true });
     if (TG_ADMIN_ID && u.id !== TG_ADMIN_ID) { tgSend(chatId, 'no access'); return res.json({ ok:true }); }
 
-    const [cmd, ...rest] = text.split(/\s+/);
+    const [cmdRaw, ...rest] = text.split(/\s+/);
+    const cmd = cmdRaw.toLowerCase();
     if (cmd === '/start') {
       tgSend(chatId, 'Команды:\n/invites 1 — создать 1 ключ\n/invites 10 — создать 10 ключей\n/users 10 — показать 10 пользователей\n/deploy — запустить деплой (если настроен Render API)');
     } else if (cmd === '/invites') {
-      const n = Math.max(1, Math.min(100, Number(rest[0]||1)));
+      // поддержка форматов: "/invites 10" или "/invites10"
+      let nStr = rest[0] || (cmdRaw.replace(/[^0-9]/g,'') || '1');
+      let n = parseInt(nStr, 10); if (isNaN(n)) n = 1; n = Math.max(1, Math.min(100, n));
       const created = [];
       for (let i=0;i<n;i++){
         let key; while (true){ key = 'INV-' + randomKey(20); const ex = await invitesDb.findOne({ key: normKey(key) }); if (!ex) break; }
         await invitesDb.insert({ key: normKey(key), raw: key, used: false });
         created.push(key);
       }
-      tgSend(chatId, `Создано ${created.length}:\n` + created.join('\n'));
+      // если сообщение слишком длинное — отправим частями
+      const header = `Создано ${created.length}:`;
+      let chunk = header + "\n";
+      for (const k of created){
+        if ((chunk + k + "\n").length > 3500){ tgSend(chatId, chunk.trimEnd()); chunk = ''; }
+        chunk += k + "\n";
+      }
+      if (chunk.trim()) tgSend(chatId, chunk.trim());
     } else if (cmd === '/users') {
       const limit = Math.max(1, Math.min(50, Number(rest[0]||10)));
       const all = await usersDb.find({}).sort({ _id: -1 }).limit(limit);
       const lines = all.map(u=>`${u.username} — ${u.hwid_status||'no_hwid'}`);
       tgSend(chatId, lines.length? lines.join('\n') : 'Нет пользователей');
     } else if (cmd === '/deploy') {
-      const r = await renderDeploy();
-      tgSend(chatId, r.ok? 'Запустил деплой (clear cache)' : `Не удалось: ${r.error}`);
+      if (!RENDER_API_TOKEN || !RENDER_SERVICE_ID){
+        tgSend(chatId, 'Не настроено: добавь переменные RENDER_API_TOKEN и RENDER_SERVICE_ID в Render → Environment');
+      } else {
+        const r = await renderDeploy();
+        tgSend(chatId, r.ok? 'Запустил деплой (clear cache)' : `Не удалось: ${r.error}`);
+      }
     } else {
       tgSend(chatId, 'Неизвестная команда');
     }
@@ -243,14 +257,18 @@ app.post('/register', async (req, res) => {
     req.session.flash = { type:'success', message:'Добро пожаловать!' };
     return res.redirect('/download');
   }
-  // Accept invite keys with or without dashes/spaces (normalize on lookup too)
-  let inv = await invitesDb.findOne({ key: key, used: { $ne: true } });
-  if (!inv) {
-    // backward compatibility with old records that stored dashed key in `key`
-    inv = await invitesDb.findOne({ raw: keyRaw, used: { $ne: true } })
-      || await invitesDb.findOne({ key: keyRaw, used: { $ne: true } });
+  // Accept invite keys with or without dashes/spaces (tolerant lookup)
+  // 1) Попробуем найти любой инвайт по key/raw без фильтра used, чтобы различить «неверный» и «уже использован»
+  let invAny = await invitesDb.findOne({ $or: [ { key: key }, { raw: keyRaw }, { key: normKey(keyRaw) } ] });
+  if (!invAny) {
+    req.session.flash={type:'error',message:'Неверный ключ: проверь, что скопирован полностью без лишних символов'};
+    return res.redirect('/register');
   }
-  if (!inv) { req.session.flash={type:'error',message:'Неверный или уже использованный ключ'}; return res.redirect('/register'); }
+  if (invAny.used === true) {
+    req.session.flash={type:'error',message:'Ключ уже использован. Сгенерируйте новый'};
+    return res.redirect('/register');
+  }
+  const inv = invAny;
   await usersDb.update({ usernameLower }, { $set: { username, usernameLower, key_hash: key } }, { upsert: true });
   await invitesDb.update({ _id: inv._id }, { $set: { used: true, used_by: username, used_at: new Date().toISOString() } });
   await invitesDb.update({ _id: inv._id }, { $set: { used_byLower: usernameLower } });
