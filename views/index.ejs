@@ -1,13 +1,16 @@
 <%- include('partials/layout', { title: 'BABER client' }) %>
+<canvas id="stars-back" class="stars layer back"></canvas>
+<canvas id="stars-mid" class="stars layer mid"></canvas>
+<canvas id="stars-front" class="stars layer front"></canvas>
 <section class="hero card">
   <h1 class="shine">BABER — самый быстрый Autoby & AutoMyst + XRay</h1>
   <p class="muted">Лёгкий клиент с максимальным FPS, умной автозакупкой и точным авто‑мистом. XRay нового поколения — видишь то, что нужно.</p>
   <div class="actions">
     <% if (!user) { %>
-      <a class="btn" href="/login">Войти</a>
+      <a class="btn glow" href="/login">Войти</a>
       <a class="btn outline" href="/register">Регистрация</a>
     <% } else { %>
-      <a class="btn" href="/download">Скачать клиент</a>
+      <a class="btn glow" href="/download">Скачать клиент</a>
       <a class="btn outline" href="/hwid">Привязать HWID</a>
     <% } %>
   </div>
@@ -69,3 +72,59 @@
   <% } %>
 </section>
 <%- include('partials/footer') %>
+
+<script>
+// Многослойные звёзды (параллакс): back, mid, front
+(function(){
+  const layers = [
+    { id:'stars-back',  speed: 0.5, size:[0.4,1.0],  alpha:[0.2,0.5], color:[154,214,255] },
+    { id:'stars-mid',   speed: 1.0, size:[0.6,1.6],  alpha:[0.3,0.7], color:[130,180,255] },
+    { id:'stars-front', speed: 1.7, size:[0.9,2.1],  alpha:[0.4,0.9], color:[255,255,255] },
+  ];
+  const scenes = [];
+  function initLayer(def){
+    const cv = document.getElementById(def.id);
+    if(!cv) return;
+    const ctx = cv.getContext('2d');
+    const scene = { cv, ctx, def, w:0, h:0, stars:[] };
+    scenes.push(scene);
+    function rand(min,max){ return Math.random()*(max-min)+min; }
+    function resize(){
+      scene.w = cv.width = window.innerWidth;
+      scene.h = cv.height = window.innerHeight;
+      const count = Math.min(300, Math.floor((scene.w*scene.h)/10000 * (def.speed))); // больше на быстрых слоях
+      scene.stars = new Array(count).fill(0).map(()=>({
+        x: Math.random()*scene.w,
+        y: Math.random()*scene.h,
+        r: rand(def.size[0], def.size[1]),
+        s: rand(def.speed*0.5, def.speed*1.2),
+        a: rand(def.alpha[0], def.alpha[1])
+      }));
+    }
+    function step(){
+      const {w,h} = scene; const [r,g,b] = def.color;
+      ctx.clearRect(0,0,w,h);
+      for(const st of scene.stars){
+        ctx.beginPath();
+        ctx.fillStyle = `rgba(${r},${g},${b},${st.a})`;
+        ctx.arc(st.x, st.y, st.r, 0, Math.PI*2);
+        ctx.fill();
+        // лёгкий хвост
+        ctx.beginPath();
+        const grad = ctx.createLinearGradient(st.x, st.y-8, st.x, st.y);
+        grad.addColorStop(0, `rgba(${r},${g},${b},0)`);
+        grad.addColorStop(1, `rgba(${r},${g},${b},${st.a*0.7})`);
+        ctx.strokeStyle = grad; ctx.lineWidth = Math.max(1, st.r*0.5);
+        ctx.moveTo(st.x, st.y-8); ctx.lineTo(st.x, st.y); ctx.stroke();
+        // движение
+        st.y += st.s*1.6; st.x += st.s*0.25;
+        if (st.y > h+10 || st.x > w+10){ st.x = Math.random()*w*0.6; st.y = -10; }
+      }
+      requestAnimationFrame(step);
+    }
+    resize(); step();
+    window.addEventListener('resize', resize);
+  }
+  layers.forEach(initLayer);
+})();
+</script>
