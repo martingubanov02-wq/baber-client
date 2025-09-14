@@ -5,6 +5,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import Datastore from 'nedb-promises';
 import compression from 'compression';
+import bcrypt from 'bcryptjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,6 +15,11 @@ const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 // Provide a safe default so the admin endpoint works even if env var is missing (can be overridden in Environment)
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'admin-123';
+// Global switch: allow or disable self-registration
+const ALLOW_REGISTER = (process.env.ALLOW_REGISTER || 'false').toLowerCase() === 'true';
+// Invite key format controls
+const INVITE_PREFIX = (process.env.INVITE_PREFIX || 'INV-');
+const INVITE_LEN = Math.max(4, Number(process.env.INVITE_LEN || 8));
 // Telegram bot integration (optional)
 const TG_BOT_TOKEN = process.env.TG_BOT_TOKEN || '';
 const TG_ADMIN_ID = Number(process.env.TG_ADMIN_ID || 0); // numeric Telegram user id
@@ -50,6 +56,7 @@ if (DATABASE_URL) {
     username TEXT UNIQUE,
     usernameLower TEXT UNIQUE,
     key_hash TEXT,
+    password_hash TEXT,
     hwid TEXT,
     hwid_status TEXT,
     hwid_approved_at TEXT,
@@ -60,6 +67,8 @@ if (DATABASE_URL) {
     game_activated_at TEXT,
     created_at TIMESTAMP DEFAULT NOW()
   )`);
+  // Migrations for password-based auth
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT`);
   await pool.query(`CREATE TABLE IF NOT EXISTS invites (
     id SERIAL PRIMARY KEY,
     key TEXT UNIQUE,
@@ -149,7 +158,23 @@ if (DATABASE_URL) {
   invitesDb = {
     async findOne(query){
       if (query?.$or) {
-        const res = await pool.query('SELECT * FROM invites WHERE used_by=$1 OR used_byLower=$2 LIMIT 1', [query.$or[0].used_by||null, query.$or[1].used_byLower||null]);
+        // Support $or over key/raw/used_by/used_byLower
+        const clauses = [];
+        const params = [];
+        for (const cond of query.$or) {
+          if (cond.key) { clauses.push(`key=$${params.length+1}`); params.push(cond.key); }
+          if (cond.raw) { clauses.push(`raw=$${params.length+1}`); params.push(cond.raw); }
+          if (cond.used_by) { clauses.push(`used_by=$${params.length+1}`); params.push(cond.used_by); }
+          if (cond.used_byLower) { clauses.push(`used_byLower=$${params.length+1}`); params.push(cond.used_byLower); }
+          if (cond.id || cond._id) { clauses.push(`id=$${params.length+1}`); params.push(cond.id||cond._id); }
+        }
+        if (clauses.length){
+          const res = await pool.query(`SELECT * FROM invites WHERE ${clauses.join(' OR ')} LIMIT 1`, params);
+          return res.rows[0] || null;
+        }
+      }
+      if (query && (query.id || query._id)) {
+        const res = await pool.query('SELECT * FROM invites WHERE id=$1 LIMIT 1', [query.id||query._id]);
         return res.rows[0] || null;
       }
       if (query?.key && query?.used && query.used.$ne === true) {
@@ -210,6 +235,7 @@ app.use(session({
 app.use((req, res, next) => {
   res.locals.user = req.session.user || null;
   res.locals.flash = req.session.flash || null;
+  res.locals.allowRegister = ALLOW_REGISTER;
   delete req.session.flash;
   next();
 });
@@ -286,7 +312,7 @@ app.post('/tg/:secret', express.json({ limit: '256kb' }), async (req, res) => {
       let n = parseInt(nStr, 10); if (isNaN(n)) n = 1; n = Math.max(1, Math.min(100, n));
       const created = [];
       for (let i=0;i<n;i++){
-        let key; while (true){ key = 'INV-' + randomKey(20); const ex = await invitesDb.findOne({ key: normKey(key) }); if (!ex) break; }
+        let key; while (true){ key = INVITE_PREFIX + randomKey(INVITE_LEN); const ex = await invitesDb.findOne({ key: normKey(key) }); if (!ex) break; }
         await invitesDb.insert({ key: normKey(key), raw: key, used: false });
         created.push(key);
       }
@@ -336,10 +362,8 @@ app.get('/admin/invites', async (req, res) => {
   const created = [];
   for (let i = 0; i < count; i++) {
     let key;
-    // ensure uniqueness
-    // eslint-disable-next-line no-constant-condition
     while (true) {
-      key = 'INV-' + randomKey(20);
+      key = INVITE_PREFIX + randomKey(INVITE_LEN);
       const exists = await invitesDb.findOne({ key: normKey(key) });
       if (!exists) break;
     }
@@ -405,95 +429,39 @@ app.get('/', async (req, res) => {
     return res.render('index', { title: 'BABER client' });
   }
 });
-app.get('/register', (req, res) => res.render('register', { title: 'Регистрация' }));
-app.post('/register', async (req, res) => {
-  const username = (req.body.username||'').trim();
-  const usernameLower = username.toLowerCase();
-  const keyRaw = (req.body.key||'').trim();
-  const key = normKey(keyRaw);
-  if (!username || !key) { req.session.flash={type:'error',message:'Укажи ник и ключ'}; return res.redirect('/register'); }
-  // Ник уже существует? Разрешим вход, а не новую регистрацию
-  const existing = await usersDb.findOne({ usernameLower });
-  if (existing) {
-    if (normKey(existing.key_hash||'') !== key) {
-      req.session.flash = { type:'error', message:'Ник уже занят. Введите правильный ключ на странице Вход.' };
-      return res.redirect('/login');
-    }
-    // Ключ совпал — считаем, что пользователь просто пытается войти через форму регистрации
-    req.session.user = { username: existing.username };
-    req.session.flash = { type:'success', message:'Добро пожаловать!' };
-    return res.redirect('/download');
-  }
-  // Accept invite keys with or without dashes/spaces (tolerant lookup)
-  // 1) Попробуем найти любой инвайт по key/raw без фильтра used, чтобы различить «неверный» и «уже использован»
-  let invAny = await invitesDb.findOne({ $or: [ { key: key }, { raw: keyRaw }, { key: normKey(keyRaw) } ] });
-  if (!invAny) {
-    req.session.flash={type:'error',message:'Неверный ключ: проверь, что скопирован полностью без лишних символов'};
-    return res.redirect('/register');
-  }
-  if (invAny.used === true) {
-    req.session.flash={type:'error',message:'Ключ уже использован. Сгенерируйте новый'};
-    return res.redirect('/register');
-  }
-  const inv = invAny;
-  await usersDb.update({ usernameLower }, { $set: { username, usernameLower, key_hash: key } }, { upsert: true });
-  await invitesDb.update({ _id: inv._id }, { $set: { used: true, used_by: username, used_at: new Date().toISOString() } });
-  await invitesDb.update({ _id: inv._id }, { $set: { used_byLower: usernameLower } });
-  req.session.user = { username };
-  req.session.flash = { type:'success', message:'Добро пожаловать!' };
-  return res.redirect('/');
+// New password-based signup/login
+app.get('/register', (req, res) => {
+  if (!ALLOW_REGISTER) return res.render('register', { title: 'Регистрация', closed: true });
+  return res.render('register', { title: 'Регистрация', closed: false });
 });
+app.post('/register', async (req, res) => {
+  if (!ALLOW_REGISTER) { req.session.flash={type:'error',message:'Регистрация отключена'}; return res.redirect('/login'); }
+  const username = (req.body.username||'').trim();
+  const password = (req.body.password||'').trim();
+  const usernameLower = username.toLowerCase();
+  if (!username || username.length<3 || !password || password.length<4) {
+    req.session.flash={type:'error',message:'Укажи ник и пароль'}; return res.redirect('/register');
+  }
+  const existing = await usersDb.findOne({ usernameLower });
+  if (existing) { req.session.flash={type:'error',message:'Ник занят'}; return res.redirect('/register'); }
+  const hash = await bcrypt.hash(password, 10);
+  await usersDb.update({ usernameLower }, { $set: { username, usernameLower, password_hash: hash } }, { upsert: true });
+  req.session.user = { username };
+  req.session.flash = { type:'success', message:'Аккаунт создан' };
+  return res.redirect('/download');
+});
+
+// Simplified registration: always create invite if missing and continue
+// Remove old invite-based simplified registration
 app.get('/login', (req, res) => res.render('login', { title: 'Вход' }));
 app.post('/login', async (req, res) => {
   const usernameInput = (req.body.username||'').trim();
+  const passwordInput = (req.body.password||'').trim();
   const usernameLower = usernameInput.toLowerCase();
-  const keyInput = normKey((req.body.key||'').trim());
-  let u = await usersDb.findOne({ $or: [ { usernameLower }, { username: usernameInput } ] });
-  let ok = false;
-  // 1) Основная проверка по user.key_hash
-  if (u && normKey(u.key_hash||'') === keyInput) {
-    ok = true;
-  }
-  // 2) Фоллбек по инвайту пользователя (case-insensitive)
-  if (!ok) {
-    const invByUser = await invitesDb.findOne({ $or: [ { used_by: (u?.username)||usernameInput }, { used_byLower: usernameLower } ] });
-    const invKeyNorm = invByUser ? normKey(invByUser.key||invByUser.raw||'') : '';
-    if (invByUser && invKeyNorm === keyInput) {
-      ok = true;
-      // если пользователя нет — создадим
-      if (!u) {
-        await usersDb.update({ usernameLower }, { $set: { username: usernameInput, usernameLower, key_hash: keyInput } }, { upsert: true });
-        u = await usersDb.findOne({ usernameLower });
-      } else if (normKey(u.key_hash||'') !== keyInput) {
-        // обновим ключ, если отличается
-        await usersDb.update({ _id: u._id }, { $set: { key_hash: keyInput } });
-      }
-    }
-  }
-  // 3) Фоллбек по инвайту с ключом (если в used_by записан ник в другом регистре)
-  if (!ok) {
-    const invByKey = await invitesDb.findOne({ key: keyInput });
-    if (invByKey && ((invByKey.used_byLower||'') === usernameLower || (invByKey.used_by||'') === usernameInput)) {
-      ok = true;
-      if (!u) {
-        await usersDb.update({ usernameLower }, { $set: { username: usernameInput, usernameLower, key_hash: keyInput } }, { upsert: true });
-        u = await usersDb.findOne({ usernameLower });
-      } else if (normKey(u.key_hash||'') !== keyInput) {
-        await usersDb.update({ _id: u._id }, { $set: { key_hash: keyInput } });
-      }
-    }
-  }
-  // 4) Если инвайт существует и ещё не использован — привяжем к этому пользователю прямо при входе
-  if (!ok) {
-    const invFree = await invitesDb.findOne({ key: keyInput, used: { $ne: true } });
-    if (invFree) {
-      await invitesDb.update({ _id: invFree._id }, { $set: { used: true, used_by: usernameInput, used_byLower: usernameLower, used_at: new Date().toISOString() } });
-      await usersDb.update({ usernameLower }, { $set: { username: usernameInput, usernameLower, key_hash: keyInput } }, { upsert: true });
-      u = await usersDb.findOne({ usernameLower });
-      ok = !!u;
-    }
-  }
-  if (!ok || !u) { req.session.flash={type:'error',message:'Неверные данные'}; return res.redirect('/login'); }
+  const u = await usersDb.findOne({ $or: [ { usernameLower }, { username: usernameInput } ] });
+  if (!u || !u.password_hash) { req.session.flash={type:'error',message:'Неверные данные'}; return res.redirect('/login'); }
+  const ok = await bcrypt.compare(passwordInput, u.password_hash);
+  if (!ok) { req.session.flash={type:'error',message:'Неверные данные'}; return res.redirect('/login'); }
   req.session.user = { username: u.username };
   return res.redirect('/');
 });
@@ -605,6 +573,43 @@ app.get('/admin/hwid/set', async (req,res)=>{
   if (!username || !hwid) return res.status(400).json({ error:'user & hwid required' });
   await usersDb.update({ username }, { $set: { hwid, hwid_status: 'approved', hwid_approved_at: new Date().toISOString() } }, { upsert: true });
   return res.json({ ok:true });
+});
+
+// Admin: check invite by key for troubleshooting
+app.get('/admin/invite/check', async (req, res) => {
+  const token = (req.query.token||'').toString();
+  if (token !== ADMIN_TOKEN) return res.status(403).json({ error:'forbidden' });
+  const keyRaw = (req.query.k||'').toString().trim();
+  const keyNorm = normKey(keyRaw);
+  const inv = await invitesDb.findOne({ $or: [ { key: keyNorm }, { raw: keyRaw }, { key: normKey(keyRaw) } ] });
+  if (!inv) return res.json({ found:false, keyRaw, keyNorm });
+  return res.json({ found:true, used: !!inv.used, used_by: inv.used_by||null, raw: inv.raw||null, key: inv.key||null });
+});
+
+// Admin: force register user with given key (creates invite if missing)
+app.get('/admin/register', async (req, res) => {
+  try{
+    const token = (req.query.token||'').toString();
+    if (token !== ADMIN_TOKEN) return res.status(403).json({ error:'forbidden' });
+    const username = (req.query.user||'').toString().trim();
+    const keyRaw = (req.query.key||'').toString().trim();
+    if (!username || !keyRaw) return res.status(400).json({ error: 'user and key are required' });
+    const usernameLower = username.toLowerCase();
+    const key = normKey(keyRaw);
+    // ensure invite exists
+    let inv = await invitesDb.findOne({ $or: [ { key }, { raw: keyRaw } ] });
+    if (!inv) {
+      await invitesDb.insert({ key, raw: keyRaw, used: false });
+      inv = await invitesDb.findOne({ $or: [ { key }, { raw: keyRaw } ] });
+    }
+    // create/update user and mark invite used
+    await usersDb.update({ usernameLower }, { $set: { username, usernameLower, key_hash: key } }, { upsert: true });
+    await invitesDb.update({ _id: inv._id }, { $set: { used: true, used_by: username, used_byLower: usernameLower, used_at: new Date().toISOString() } });
+    return res.json({ ok:true, user: username, keyRaw, key });
+  }catch(e){
+    console.error('admin/register error', e);
+    return res.status(500).json({ error: 'internal', detail: String(e) });
+  }
 });
 
 // Protected content requires HWID approved
