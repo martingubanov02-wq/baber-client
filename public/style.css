@@ -1,7 +1,7 @@
 *{box-sizing:border-box}
 body{margin:0;background:#0f1115;color:#eaeef2;font:16px/1.5 system-ui,Segoe UI,Roboto,Arial;overflow-x:hidden}
 a{color:#58a6ff;text-decoration:none}
-.wrap{max-width:900px;margin:0 auto;padding:16px}
+.wrap{max-width:900px;margin:0 auto;padding:16px;position:relative;z-index:1}
 .nav{display:flex;justify-content:space-between;align-items:center}
 .brand{font-weight:700}
 .btn{display:inline-block;padding:8px 14px;background:#238636;color:#fff;border-radius:6px;transition:transform .12s ease,box-shadow .12s ease,background .2s ease}
@@ -23,7 +23,7 @@ input:focus{outline:none;border-color:#2f81f7;box-shadow:0 0 0 3px rgba(47,129,2
 .small{font-size:13px}
 
 /* Hero */
-.hero{position:relative;overflow:hidden}
+.hero{position:relative;overflow:hidden;margin-top:18px}
 .shine{background:linear-gradient(90deg,#fff,#9ad6ff,#fff);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shine 3.5s linear infinite}
 @keyframes shine{0%{background-position:200% 0}100%{background-position:-200% 0}}
 

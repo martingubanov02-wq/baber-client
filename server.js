@@ -130,7 +130,19 @@ app.post('/api/hwid/activate', async (req, res) => {
 });
 
 // Pages
-app.get('/', (req, res) => res.render('index', { title: 'BABER client' }));
+app.get('/', async (req, res) => {
+  try {
+    const sessUser = req.session.user;
+    let hwidStatus = null;
+    if (sessUser && sessUser.username) {
+      const u = await usersDb.findOne({ $or: [ { username: sessUser.username }, { usernameLower: (sessUser.username||'').toLowerCase() } ] });
+      hwidStatus = u?.hwid_status || null;
+    }
+    return res.render('index', { title: 'BABER client', hwidStatus });
+  } catch (e) {
+    return res.render('index', { title: 'BABER client' });
+  }
+});
 app.get('/register', (req, res) => res.render('register', { title: 'Регистрация' }));
 app.post('/register', async (req, res) => {
   const username = (req.body.username||'').trim();
@@ -162,7 +174,7 @@ app.post('/register', async (req, res) => {
   await invitesDb.update({ _id: inv._id }, { $set: { used: true, used_by: username, used_at: new Date().toISOString() } });
   req.session.user = { username };
   req.session.flash = { type:'success', message:'Добро пожаловать!' };
-  return res.redirect('/download');
+  return res.redirect('/');
 });
 app.get('/login', (req, res) => res.render('login', { title: 'Вход' }));
 app.post('/login', async (req, res) => {
@@ -170,9 +182,19 @@ app.post('/login', async (req, res) => {
   const usernameLower = usernameInput.toLowerCase();
   const keyInput = normKey((req.body.key||'').trim());
   const u = await usersDb.findOne({ $or: [ { usernameLower }, { username: usernameInput } ] });
-  if (!u || normKey(u.key_hash||'') !== keyInput) { req.session.flash={type:'error',message:'Неверные данные'}; return res.redirect('/login'); }
+  // Основная проверка по сохранённому ключу
+  let ok = !!u && normKey(u.key_hash||'') === keyInput;
+  // Фоллбек: если по какой-то причине key_hash не совпал, проверим ключ инвайта, которым регистрировались
+  if (!ok && u) {
+    const inv = await invitesDb.findOne({ used_by: u.username });
+    if (inv) {
+      const invKeyNorm = normKey(inv.key||inv.raw||'');
+      if (invKeyNorm && invKeyNorm === keyInput) ok = true;
+    }
+  }
+  if (!ok) { req.session.flash={type:'error',message:'Неверные данные'}; return res.redirect('/login'); }
   req.session.user = { username: u.username };
-  return res.redirect('/download');
+  return res.redirect('/');
 });
 app.post('/logout', (req, res)=>{ req.session.destroy(()=>res.redirect('/')); });
 
