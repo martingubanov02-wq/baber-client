@@ -49,6 +49,11 @@ app.use((req, res, next) => {
   next();
 });
 
+// Helpers
+function normKey(s = '') {
+  return String(s).toUpperCase().replace(/[^A-Z0-9]/g, ''); // remove spaces and dashes
+}
+
 // Health
 app.get('/health', (req, res) => res.send('OK'));
 
@@ -72,10 +77,10 @@ app.get('/admin/invites', async (req, res) => {
     // eslint-disable-next-line no-constant-condition
     while (true) {
       key = 'INV-' + randomKey(20);
-      const exists = await invitesDb.findOne({ key });
+      const exists = await invitesDb.findOne({ key: normKey(key) });
       if (!exists) break;
     }
-    await invitesDb.insert({ key, used: false });
+    await invitesDb.insert({ key: normKey(key), raw: key, used: false });
     created.push(key);
   }
   return res.json({ created });
@@ -104,9 +109,16 @@ app.get('/', (req, res) => res.render('index', { title: 'BABER client' }));
 app.get('/register', (req, res) => res.render('register', { title: 'Регистрация' }));
 app.post('/register', async (req, res) => {
   const username = (req.body.username||'').trim();
-  const key = (req.body.key||'').trim();
+  const keyRaw = (req.body.key||'').trim();
+  const key = normKey(keyRaw);
   if (!username || !key) { req.session.flash={type:'error',message:'Укажи ник и ключ'}; return res.redirect('/register'); }
-  const inv = await invitesDb.findOne({ key, used: { $ne: true } });
+  // Accept invite keys with or without dashes/spaces (normalize on lookup too)
+  let inv = await invitesDb.findOne({ key: key, used: { $ne: true } });
+  if (!inv) {
+    // backward compatibility with old records that stored dashed key in `key`
+    inv = await invitesDb.findOne({ raw: keyRaw, used: { $ne: true } })
+      || await invitesDb.findOne({ key: keyRaw, used: { $ne: true } });
+  }
   if (!inv) { req.session.flash={type:'error',message:'Неверный или уже использованный ключ'}; return res.redirect('/register'); }
   await usersDb.update({ username }, { $set: { username, key_hash: key } }, { upsert: true });
   await invitesDb.update({ _id: inv._id }, { $set: { used: true, used_by: username, used_at: new Date().toISOString() } });
@@ -117,9 +129,9 @@ app.post('/register', async (req, res) => {
 app.get('/login', (req, res) => res.render('login', { title: 'Вход' }));
 app.post('/login', async (req, res) => {
   const username = (req.body.username||'').trim();
-  const key = (req.body.key||'').trim();
+  const keyInput = normKey((req.body.key||'').trim());
   const u = await usersDb.findOne({ username });
-  if (!u || u.key_hash !== key) { req.session.flash={type:'error',message:'Неверные данные'}; return res.redirect('/login'); }
+  if (!u || normKey(u.key_hash||'') !== keyInput) { req.session.flash={type:'error',message:'Неверные данные'}; return res.redirect('/login'); }
   req.session.user = { username };
   return res.redirect('/download');
 });
