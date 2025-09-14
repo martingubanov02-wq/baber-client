@@ -63,7 +63,7 @@ function normKey(s = '') {
 }
 
 // ===== Telegram helpers =====
-const https = require('https');
+import https from 'https';
 function tgSend(chatId, text) {
   if (!TG_BOT_TOKEN) return;
   const payload = JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true });
