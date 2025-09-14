@@ -149,31 +149,58 @@ async function requireHwidApproved(req, res, next){
 app.get('/hwid', requireAuth, async (req,res)=>{
   const username = req.session.user.username;
   const u = await usersDb.findOne({ username });
-  return res.render('hwid', { title: 'HWID привязка', u, funpay1: 'https://funpay.com/users/13579417/', funpay2: 'https://funpay.com/users/10104456/', price: 30 });
+  // Auto-approve if there is a pending hwid already stored (to avoid stuck "pending")
+  if (u && u.hwid && u.hwid_status && u.hwid_status !== 'approved') {
+    await usersDb.update(
+      { username },
+      { $set: { hwid_status: 'approved', hwid_approved_at: new Date().toISOString(), hwid_activation_used: true } }
+    );
+    req.session.flash = { type:'success', message:'HWID подтверждён. Скачивание доступно.' };
+  }
+  const u2 = await usersDb.findOne({ username });
+  return res.render('hwid', { title: 'HWID привязка', u: u2, funpay1: 'https://funpay.com/users/13579417/', funpay2: 'https://funpay.com/users/10104456/', price: 30 });
 });
 
 app.post('/hwid', requireAuth, async (req,res)=>{
   const username = req.session.user.username;
   const hwid = (req.body.hwid||'').trim();
-  const key = (req.body.key||'').trim();
   if (!hwid || hwid.length < 6 || hwid.length > 128){
     req.session.flash = { type:'error', message:'Укажи корректный HWID' };
     return res.redirect('/hwid');
   }
   const u = await usersDb.findOne({ username });
   if (!u) { req.session.flash={type:'error',message:'Пользователь не найден'}; return res.redirect('/hwid'); }
-  // One-time activation with account key
-  if (!u.hwid_activation_used) {
-    if (!key) { req.session.flash={type:'error',message:'Укажи ключ активации (полученный при регистрации)'}; return res.redirect('/hwid'); }
-    if (u.key_hash !== key) { req.session.flash={type:'error',message:'Неверный ключ активации'}; return res.redirect('/hwid'); }
-  }
-  // If activation already used and user wants to change HWID, require admin reset flow
-  if (u.hwid_activation_used) {
-    req.session.flash = { type:'error', message:'Активация HWID уже использована. Для смены HWID обратитесь к администратору (30 RUB).' };
+  // If there is already a pending HWID for this user, auto-approve it now
+  if (u.hwid && u.hwid_status !== 'approved') {
+    await usersDb.update(
+      { username },
+      { $set: {
+          hwid: u.hwid, // keep existing
+          hwid_status: 'approved',
+          hwid_approved_at: new Date().toISOString(),
+          hwid_activation_used: true
+        } }
+    );
+    req.session.flash = { type:'success', message:'HWID подтверждён. Скачивание доступно.' };
     return res.redirect('/hwid');
   }
-  await usersDb.update({ username }, { $set: { hwid, hwid_status: 'pending', hwid_updated_at: new Date().toISOString(), hwid_activation_used: true } }, { upsert: true });
-  req.session.flash = { type:'success', message:'HWID отправлен на проверку (одноразовая активация). После оплаты 30 RUB на FunPay админ подтвердит.' };
+  // One-time activation without extra key (auto-approve on first bind)
+  if (u.hwid_activation_used) {
+    req.session.flash = { type:'error', message:'HWID уже был привязан. Для смены HWID обратитесь к администратору (30 ₽).' };
+    return res.redirect('/hwid');
+  }
+  await usersDb.update(
+    { username },
+    { $set: {
+        hwid,
+        hwid_status: 'approved',
+        hwid_updated_at: new Date().toISOString(),
+        hwid_approved_at: new Date().toISOString(),
+        hwid_activation_used: true
+      } },
+    { upsert: true }
+  );
+  req.session.flash = { type:'success', message:'HWID привязан и автоматически подтверждён. Скачивание доступно.' };
   return res.redirect('/hwid');
 });
 

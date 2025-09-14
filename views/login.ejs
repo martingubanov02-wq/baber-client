@@ -1,11 +1,11 @@
 <%- include('partials/layout', { title: 'Вход' }) %>
 <section class="card small">
   <h2>Вход</h2>
-  <form method="post" action="/login">
+  <form method="post" action="/login" autocomplete="off">
     <label>Ник</label>
-    <input type="text" name="username" required />
+    <input type="text" name="username" required autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
     <label>Ключ</label>
-    <input type="password" name="key" required />
+    <input type="password" name="key" required autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false" />
     <button class="btn" type="submit">Войти</button>
   </form>
 </section>
