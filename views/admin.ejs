@@ -1,0 +1,13 @@
+<%- include('partials/layout', { title: 'Админ' }) %>
+<section class="card small">
+  <h2>Админ-панель</h2>
+  <p class="muted">Сервисные действия. Доступ по токену.</p>
+  <div class="actions">
+    <a class="btn" href="/admin/invites?count=1&token=<%= adminToken %>">Создать 1 инвайт</a>
+    <a class="btn outline" href="/admin/invites?count=10&token=<%= adminToken %>">Создать 10 инвайтов</a>
+  </div>
+  <hr style="border:0;border-top:1px solid #222836;margin:14px 0"/>
+  <h3>Обновление сайта</h3>
+  <p class="small muted">Зайдите в Render → Manual Deploy → Clear build cache & deploy. После логов с "web3 ready: http://localhost:3000" обновите вкладку с Ctrl+F5.</p>
+</section>
+<%- include('partials/footer') %>

@@ -14,6 +14,13 @@ const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 // Provide a safe default so the admin endpoint works even if env var is missing (can be overridden in Environment)
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'admin-123';
+// Telegram bot integration (optional)
+const TG_BOT_TOKEN = process.env.TG_BOT_TOKEN || '';
+const TG_ADMIN_ID = Number(process.env.TG_ADMIN_ID || 0); // numeric Telegram user id
+const TG_WEBHOOK_SECRET = process.env.TG_WEBHOOK_SECRET || 'tg-secret';
+// Render API (optional, for /deploy via bot)
+const RENDER_API_TOKEN = process.env.RENDER_API_TOKEN || '';
+const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID || '';
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(path.join(DATA_DIR, 'sessions'), { recursive: true });
@@ -55,8 +62,82 @@ function normKey(s = '') {
   return String(s).toUpperCase().replace(/[^A-Z0-9]/g, ''); // remove spaces and dashes
 }
 
+// ===== Telegram helpers =====
+const https = require('https');
+function tgSend(chatId, text) {
+  if (!TG_BOT_TOKEN) return;
+  const payload = JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true });
+  const url = new URL(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`);
+  const opts = { method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } };
+  const req = https.request(url, opts, res => { res.resume(); });
+  req.on('error', ()=>{});
+  req.write(payload); req.end();
+}
+async function renderDeploy() {
+  if (!RENDER_API_TOKEN || !RENDER_SERVICE_ID) return { ok:false, error:'RENDER_API not configured' };
+  try {
+    const payload = JSON.stringify({ clearCache: true });
+    const url = new URL(`https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys`);
+    const opts = { method: 'POST', headers: { 'Authorization': `Bearer ${RENDER_API_TOKEN}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } };
+    await new Promise((resolve, reject) => {
+      const r = https.request(url, opts, res => { res.on('data', ()=>{}); res.on('end', resolve); });
+      r.on('error', reject); r.write(payload); r.end();
+    });
+    return { ok:true };
+  } catch (e) { return { ok:false, error:String(e) }; }
+}
+
+// ===== Simple Admin panel (token required) =====
+app.get('/admin', (req, res) => {
+  const token = (req.query.token||'').toString();
+  if (!ADMIN_TOKEN) return res.status(503).send('ADMIN_TOKEN not set');
+  if (token !== ADMIN_TOKEN) return res.status(403).send('forbidden');
+  res.render('admin', { title: 'Админ', adminToken: ADMIN_TOKEN });
+});
+
 // Health
 app.get('/health', (req, res) => res.send('OK'));
+
+// Telegram Webhook (POST /tg/:secret)
+app.post('/tg/:secret', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    if (!TG_BOT_TOKEN) return res.status(503).send('tg disabled');
+    if (req.params.secret !== TG_WEBHOOK_SECRET) return res.status(403).send('forbidden');
+    const u = req.body?.message?.from;
+    const chatId = req.body?.message?.chat?.id;
+    const text = (req.body?.message?.text||'').trim();
+    if (!u || !chatId || !text) return res.json({ ok:true });
+    if (TG_ADMIN_ID && u.id !== TG_ADMIN_ID) { tgSend(chatId, 'no access'); return res.json({ ok:true }); }
+
+    const [cmd, ...rest] = text.split(/\s+/);
+    if (cmd === '/start') {
+      tgSend(chatId, 'Команды:\n/invites 1 — создать 1 ключ\n/invites 10 — создать 10 ключей\n/users 10 — показать 10 пользователей\n/deploy — запустить деплой (если настроен Render API)');
+    } else if (cmd === '/invites') {
+      const n = Math.max(1, Math.min(100, Number(rest[0]||1)));
+      const created = [];
+      for (let i=0;i<n;i++){
+        let key; while (true){ key = 'INV-' + randomKey(20); const ex = await invitesDb.findOne({ key: normKey(key) }); if (!ex) break; }
+        await invitesDb.insert({ key: normKey(key), raw: key, used: false });
+        created.push(key);
+      }
+      tgSend(chatId, `Создано ${created.length}:\n` + created.join('\n'));
+    } else if (cmd === '/users') {
+      const limit = Math.max(1, Math.min(50, Number(rest[0]||10)));
+      const all = await usersDb.find({}).sort({ _id: -1 }).limit(limit);
+      const lines = all.map(u=>`${u.username} — ${u.hwid_status||'no_hwid'}`);
+      tgSend(chatId, lines.length? lines.join('\n') : 'Нет пользователей');
+    } else if (cmd === '/deploy') {
+      const r = await renderDeploy();
+      tgSend(chatId, r.ok? 'Запустил деплой (clear cache)' : `Не удалось: ${r.error}`);
+    } else {
+      tgSend(chatId, 'Неизвестная команда');
+    }
+    return res.json({ ok:true });
+  } catch (e) {
+    try { const chatId = req.body?.message?.chat?.id; if (chatId) tgSend(chatId, 'Ошибка: ' + e); } catch {}
+    return res.json({ ok:true });
+  }
+});
 
 // Admin: generate invite keys
 function randomKey(len = 20) {
