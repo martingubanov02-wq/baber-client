@@ -22,15 +22,172 @@ const TG_WEBHOOK_SECRET = process.env.TG_WEBHOOK_SECRET || 'tg-secret';
 const RENDER_API_TOKEN = process.env.RENDER_API_TOKEN || '';
 const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID || '';
 
+// Ensure data directories; if DATA_DIR differs from repo data path, try one-time migrate
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(path.join(DATA_DIR, 'sessions'), { recursive: true });
+const REPO_DATA_DIR = path.join(__dirname, 'data');
+try {
+  if (path.resolve(DATA_DIR) !== path.resolve(REPO_DATA_DIR)) {
+    const usersPath = path.join(DATA_DIR, 'users.db');
+    const invitesPath = path.join(DATA_DIR, 'invites.db');
+    const oldUsers = path.join(REPO_DATA_DIR, 'users.db');
+    const oldInvites = path.join(REPO_DATA_DIR, 'invites.db');
+    if (!fs.existsSync(usersPath) && fs.existsSync(oldUsers)) fs.copyFileSync(oldUsers, usersPath);
+    if (!fs.existsSync(invitesPath) && fs.existsSync(oldInvites)) fs.copyFileSync(oldInvites, invitesPath);
+  }
+} catch {}
 
-// DB
-const usersDb = Datastore.create({ filename: path.join(DATA_DIR, 'users.db'), autoload: true, timestampData: true });
-const invitesDb = Datastore.create({ filename: path.join(DATA_DIR, 'invites.db'), autoload: true, timestampData: true });
-await usersDb.ensureIndex({ fieldName: 'username', unique: false });
-await usersDb.ensureIndex({ fieldName: 'usernameLower', unique: true });
-await invitesDb.ensureIndex({ fieldName: 'key', unique: true });
+// DB (Postgres adapter if DATABASE_URL provided, otherwise NeDB)
+const DATABASE_URL = process.env.DATABASE_URL || '';
+let usersDb, invitesDb;
+if (DATABASE_URL) {
+  const pgMod = await import('pg');
+  const { Pool } = pgMod;
+  const pool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  // init tables
+  await pool.query(`CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    username TEXT UNIQUE,
+    usernameLower TEXT UNIQUE,
+    key_hash TEXT,
+    hwid TEXT,
+    hwid_status TEXT,
+    hwid_approved_at TEXT,
+    hwid_updated_at TEXT,
+    hwid_activation_used BOOLEAN,
+    hwid_reset_done_at TEXT,
+    game_activation_used BOOLEAN,
+    game_activated_at TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS invites (
+    id SERIAL PRIMARY KEY,
+    key TEXT UNIQUE,
+    raw TEXT,
+    used BOOLEAN DEFAULT FALSE,
+    used_by TEXT,
+    used_byLower TEXT,
+    used_at TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+  )`);
+
+  usersDb = {
+    async findOne(query){
+      if (query?.$or) {
+        const a = query.$or[0];
+        const b = query.$or[1];
+        const nameL = a.usernameLower || b.usernameLower || null;
+        const name = a.username || b?.username || null;
+        const res = await pool.query('SELECT * FROM users WHERE usernameLower=$1 OR username=$2 LIMIT 1', [nameL, name]);
+        return res.rows[0] || null;
+      }
+      if (query?.username) {
+        const res = await pool.query('SELECT * FROM users WHERE username=$1 LIMIT 1', [query.username]);
+        return res.rows[0] || null;
+      }
+      if (query?.usernameLower) {
+        const res = await pool.query('SELECT * FROM users WHERE usernameLower=$1 LIMIT 1', [query.usernameLower]);
+        return res.rows[0] || null;
+      }
+      return null;
+    },
+    async update(filter, updateObj, options={}){
+      // supports patterns used in code
+      let row = await this.findOne(filter);
+      if (!row && options.upsert) {
+        const set = updateObj.$set || {};
+        const username = set.username || filter.username || null;
+        const usernameLower = set.usernameLower || filter.usernameLower || (username? username.toLowerCase(): null);
+        await pool.query('INSERT INTO users (username, usernameLower, key_hash, hwid, hwid_status, hwid_approved_at, hwid_updated_at, hwid_activation_used, hwid_reset_done_at, game_activation_used, game_activated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (usernameLower) DO UPDATE SET username=EXCLUDED.username, key_hash=EXCLUDED.key_hash, hwid=EXCLUDED.hwid, hwid_status=EXCLUDED.hwid_status, hwid_approved_at=EXCLUDED.hwid_approved_at, hwid_updated_at=EXCLUDED.hwid_updated_at, hwid_activation_used=EXCLUDED.hwid_activation_used, hwid_reset_done_at=EXCLUDED.hwid_reset_done_at, game_activation_used=EXCLUDED.game_activation_used, game_activated_at=EXCLUDED.game_activated_at', [
+          username,
+          usernameLower,
+          set.key_hash||null,
+          set.hwid||null,
+          set.hwid_status||null,
+          set.hwid_approved_at||null,
+          set.hwid_updated_at||null,
+          set.hwid_activation_used??null,
+          set.hwid_reset_done_at||null,
+          set.game_activation_used??null,
+          set.game_activated_at||null
+        ]);
+        return;
+      }
+      if (!row) return;
+      const set = updateObj.$set || {};
+      const unset = (updateObj.$unset||{});
+      const merged = { ...row, ...set };
+      for (const k of Object.keys(unset)) delete merged[k];
+      const usernameLowerFinal = (merged.usernameLower || merged.usernamelower || (merged.username? merged.username.toLowerCase(): null));
+      await pool.query('UPDATE users SET username=$1, usernameLower=$2, key_hash=$3, hwid=$4, hwid_status=$5, hwid_approved_at=$6, hwid_updated_at=$7, hwid_activation_used=$8, hwid_reset_done_at=$9, game_activation_used=$10, game_activated_at=$11 WHERE id=$12', [
+        merged.username||null,
+        usernameLowerFinal||null,
+        merged.key_hash||null,
+        merged.hwid||null,
+        merged.hwid_status||null,
+        merged.hwid_approved_at||null,
+        merged.hwid_updated_at||null,
+        merged.hwid_activation_used??null,
+        merged.hwid_reset_done_at||null,
+        merged.game_activation_used??null,
+        merged.game_activated_at||null,
+        row.id
+      ]);
+    },
+    async insert(doc){
+      await this.update({ usernameLower: doc.usernameLower }, { $set: doc }, { upsert: true });
+    },
+    find(){
+      return {
+        sort(){ return this; },
+        async limit(n){ const r = await pool.query('SELECT * FROM users ORDER BY id DESC LIMIT $1', [n]); return r.rows; }
+      };
+    },
+    async ensureIndex(){ /* noop */ }
+  };
+
+  invitesDb = {
+    async findOne(query){
+      if (query?.$or) {
+        const res = await pool.query('SELECT * FROM invites WHERE used_by=$1 OR used_byLower=$2 LIMIT 1', [query.$or[0].used_by||null, query.$or[1].used_byLower||null]);
+        return res.rows[0] || null;
+      }
+      if (query?.key && query?.used && query.used.$ne === true) {
+        const res = await pool.query('SELECT * FROM invites WHERE key=$1 AND (used IS DISTINCT FROM TRUE) LIMIT 1', [query.key]);
+        return res.rows[0] || null;
+      }
+      if (query?.key) {
+        const res = await pool.query('SELECT * FROM invites WHERE key=$1 LIMIT 1', [query.key]);
+        return res.rows[0] || null;
+      }
+      if (query?.raw) {
+        const res = await pool.query('SELECT * FROM invites WHERE raw=$1 LIMIT 1', [query.raw]);
+        return res.rows[0] || null;
+      }
+      return null;
+    },
+    async insert(doc){
+      await pool.query('INSERT INTO invites (key, raw, used, used_by, used_byLower, used_at) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (key) DO NOTHING', [doc.key||null, doc.raw||null, !!doc.used, doc.used_by||null, doc.used_byLower||null, doc.used_at||null]);
+    },
+    async update(filter, updateObj){
+      let row = await this.findOne(filter);
+      if (!row) return;
+      const set = updateObj.$set || {};
+      const merged = { ...row, ...set };
+      await pool.query('UPDATE invites SET key=$1, raw=$2, used=$3, used_by=$4, used_byLower=$5, used_at=$6 WHERE id=$7', [
+        merged.key||null, merged.raw||null, merged.used??null, merged.used_by||null, merged.used_byLower||null, merged.used_at||null, row.id
+      ]);
+    },
+    async ensureIndex(){ /* noop; enforced by schema */ }
+  };
+} else {
+  // NeDB fallback (current behavior)
+  usersDb = Datastore.create({ filename: path.join(DATA_DIR, 'users.db'), autoload: true, timestampData: true });
+  invitesDb = Datastore.create({ filename: path.join(DATA_DIR, 'invites.db'), autoload: true, timestampData: true });
+  await usersDb.ensureIndex({ fieldName: 'username', unique: false });
+  await usersDb.ensureIndex({ fieldName: 'usernameLower', unique: true });
+  await invitesDb.ensureIndex({ fieldName: 'key', unique: true });
+}
 
 // Views & static
 app.set('view engine', 'ejs');
@@ -97,6 +254,16 @@ app.get('/admin', (req, res) => {
 
 // Health
 app.get('/health', (req, res) => res.send('OK'));
+
+// Admin backup endpoints (token required)
+app.get('/admin/export', async (req, res) => {
+  const token = (req.query.token||'').toString();
+  if (token !== ADMIN_TOKEN) return res.status(403).json({ error:'forbidden' });
+  const users = await usersDb.find({});
+  const invites = await invitesDb.find({});
+  res.setHeader('Content-Disposition', 'attachment; filename="backup.json"');
+  res.json({ users, invites, exported_at: new Date().toISOString() });
+});
 
 // Telegram Webhook (POST /tg/:secret)
 app.post('/tg/:secret', express.json({ limit: '256kb' }), async (req, res) => {
