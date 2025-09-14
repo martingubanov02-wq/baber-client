@@ -6,8 +6,12 @@ WORKDIR /app
 
 # Install deps
 COPY package*.json ./
-# Prefer ci when lockfile exists, fallback to install (without npm cache clean)
-RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
+# Harden npm for Render builder (retries, no progress) and avoid cache clean
+RUN npm config set fetch-retries 5 \
+ && npm config set fetch-retry-maxtimeout 120000 \
+ && npm config set fund false \
+ && npm config set audit false \
+ && if [ -f package-lock.json ]; then npm ci --omit=dev --no-audit --no-fund --no-progress; else npm install --omit=dev --no-audit --no-fund --no-progress; fi
 
 # Copy sources
 COPY . .
